@@ -1,8 +1,32 @@
 # JBL Flip 6 USB Volume
 
-Software volume control for a JBL Flip 6 connected over USB and recognized by Windows as **Zgmicro AUDIO**.
+**Make Windows volume controls work with your JBL Flip 6 over USB.**
+
+A portable Windows utility for speakers recognized as **Zgmicro AUDIO**, with a system tray volume control, media-key support through Windows, and quieter system sounds.
 
 If your speaker plays at full volume even when Windows shows 0%, this utility mirrors the Windows volume setting to the audio sessions playing through that device. It includes a system tray control and an option to soften Windows system sounds.
+
+## Features
+
+- Adjust application audio with the Windows volume slider or keyboard media keys.
+- Open a dedicated volume slider from the system tray.
+- Soften Windows notification and system sounds independently of application audio.
+- Optionally start the utility when you sign in to Windows.
+- Run as a portable executable, with no driver or firmware installation.
+
+## Screenshots
+
+### Volume control
+
+The app shows the current Windows volume and the number of audio sessions it manages.
+
+![JBL Flip 6 volume control showing 8 percent volume and three audio sessions](docs/images/volume-control.png)
+
+### System tray menu
+
+Open the slider, toggle mute, manage startup, soften system sounds, or exit from the tray menu. The checked options below reflect the settings used when the screenshot was taken.
+
+![System tray menu with volume, mute, startup, softer system sounds, and exit options](docs/images/tray-menu.png)
 
 ## Download and run
 
