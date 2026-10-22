@@ -1,4 +1,4 @@
-# Estado y diagnosticos locales: no publicar
+# Local state and diagnostics: do not publish
 session-levels.tsv
 session-levels.tsv.tmp
 diagnostic.txt

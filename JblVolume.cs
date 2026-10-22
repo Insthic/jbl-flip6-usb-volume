@@ -98,16 +98,16 @@ namespace JblVolume {
     enumerator=(IDeviceEnumerator)new DeviceEnumerator(); IDeviceCollection devices=null;
     try{Check(enumerator.EnumAudioEndpoints(0,1,out devices));uint count;Check(devices.GetCount(out count));
      for(uint i=0;i<count;i++){IDevice candidate=null;Check(devices.Item(i,out candidate));string id;Check(candidate.GetId(out id));string name=FriendlyName(candidate);
-      if(name.IndexOf("Zgmicro",StringComparison.OrdinalIgnoreCase)>=0){if(device!=null){Release(candidate);throw new InvalidOperationException("Hay varios Zgmicro conectados. Se requiere seleccionar el dispositivo.");}device=candidate;Id=id;Name=name;}else Release(candidate);
+      if(name.IndexOf("Zgmicro",StringComparison.OrdinalIgnoreCase)>=0){if(device!=null){Release(candidate);throw new InvalidOperationException("Multiple Zgmicro devices are connected. Device selection is required.");}device=candidate;Id=id;Name=name;}else Release(candidate);
      }
     }finally{Release(devices);}
-    if(device==null)throw new InvalidOperationException("JBL / Zgmicro no conectado. Esperando USB...");
+    if(device==null)throw new InvalidOperationException("JBL / Zgmicro is not connected. Waiting for USB...");
     Guid iid=typeof(IEndpointVolume).GUID;object result;Check(device.Activate(ref iid,23,IntPtr.Zero,out result));endpoint=(IEndpointVolume)result;
     iid=typeof(ISessionManager).GUID;Check(device.Activate(ref iid,23,IntPtr.Zero,out result));manager=(ISessionManager)result;
     Check(endpoint.QueryHardwareSupport(out HardwareSupport));LoadLevels();Read();
    }catch{Dispose();throw;}
   }
-  public void Read(){Check(endpoint.GetMasterVolumeLevelScalar(out Master));Check(endpoint.GetMute(out Muted));uint state;Check(device.GetState(out state));if(state!=1)throw new InvalidOperationException("JBL desconectado");}
+  public void Read(){Check(endpoint.GetMasterVolumeLevelScalar(out Master));Check(endpoint.GetMute(out Muted));uint state;Check(device.GetState(out state));if(state!=1)throw new InvalidOperationException("JBL disconnected");}
   public void Set(float scalar){Check(endpoint.SetMasterVolumeLevelScalar(Math.Max(0,Math.Min(1,scalar)),ref context));}
   public void ToggleMute(){Read();Check(endpoint.SetMute(!Muted,ref context));}
   public List<string> Sync(bool apply){
@@ -121,7 +121,7 @@ namespace JblVolume {
      // Keep manual application changes as their new relative level. Never amplify past 100%.
      if(pid!=0 && Math.Abs(current-level.Last)>0.002f)level.Baseline=Master>0.001f?Math.Min(1,current/Master):current;
      float target=Muted?0:(pid==0?SystemSoundsGain:level.Baseline)*Master;
-     if(apply && Math.Abs(current-target)>0.0001f){level.Last=target;SaveLevels();Check(volume.SetMasterVolume(target,ref context));float readback;Check(volume.GetMasterVolume(out readback));if(Math.Abs(readback-target)>0.002f)throw new InvalidOperationException("La sesion no acepto la atenuacion");current=readback;}
+     if(apply && Math.Abs(current-target)>0.0001f){level.Last=target;SaveLevels();Check(volume.SetMasterVolume(target,ref context));float readback;Check(volume.GetMasterVolume(out readback));if(Math.Abs(readback-target)>0.002f)throw new InvalidOperationException("The audio session did not accept the volume adjustment");current=readback;}
      level.Last=current;Sessions++;
      rows.Add(string.Format(CultureInfo.InvariantCulture,"pid={0} state={1} session={2:0.0000} target={3:0.0000}",pid,state,current,target));
     }finally{Release(control);}}
@@ -133,15 +133,15 @@ namespace JblVolume {
   NotifyIcon tray; TrackBar slider; Label status,label; System.Windows.Forms.Timer timer; Audio audio;
   bool updating; int retries; string lastError=""; bool allowClose; float systemGain=0.05f;
   public VolumeForm(bool minimized){
-   Text="Volumen JBL Flip 6";Size=new Size(430,220);FormBorderStyle=FormBorderStyle.FixedDialog;MaximizeBox=false;StartPosition=FormStartPosition.CenterScreen;
-   label=new Label{Left=20,Top=18,Width=385,Height=28,Text="JBL Flip 6 Â· Zgmicro USB",Font=new Font("Segoe UI",12)};
+   Text="JBL Flip 6 Volume";Size=new Size(430,220);FormBorderStyle=FormBorderStyle.FixedDialog;MaximizeBox=false;StartPosition=FormStartPosition.CenterScreen;
+   label=new Label{Left=20,Top=18,Width=385,Height=28,Text="JBL Flip 6 - Zgmicro USB",Font=new Font("Segoe UI",12)};
    slider=new TrackBar{Left=18,Top=55,Width=380,Minimum=0,Maximum=100,TickFrequency=10};
-   status=new Label{Left=20,Top=115,Width=380,Height=45,Text="Conectando..."};Controls.AddRange(new Control[]{label,slider,status});
-   var menu=new ContextMenuStrip();menu.Items.Add("Abrir control de volumen",null,delegate{ShowWindow();});menu.Items.Add("Silenciar / activar",null,delegate{try{if(audio!=null)audio.ToggleMute();}catch(Exception e){status.Text=e.Message;}});
-   var startup=new ToolStripMenuItem("Iniciar con Windows"){CheckOnClick=true,Checked=StartupEnabled()};startup.CheckedChanged+=delegate{SetStartup(startup.Checked);};menu.Items.Add(startup);
-   var systemQuiet=new ToolStripMenuItem("Sonidos de Windows suaves"){CheckOnClick=true,Checked=true};systemQuiet.CheckedChanged+=delegate{systemGain=systemQuiet.Checked?0.05f:1f;if(audio!=null)audio.SystemSoundsGain=systemGain;};menu.Items.Add(systemQuiet);
-   menu.Items.Add("Salir (conservar volumen actual)",null,delegate{allowClose=true;Close();});
-   tray=new NotifyIcon{Icon=SystemIcons.Information,Text="Volumen JBL Flip 6",Visible=true,ContextMenuStrip=menu};tray.DoubleClick+=delegate{ShowWindow();};
+   status=new Label{Left=20,Top=115,Width=380,Height=45,Text="Connecting..."};Controls.AddRange(new Control[]{label,slider,status});
+   var menu=new ContextMenuStrip();menu.Items.Add("Open volume control",null,delegate{ShowWindow();});menu.Items.Add("Mute / unmute",null,delegate{try{if(audio!=null)audio.ToggleMute();}catch(Exception e){status.Text=e.Message;}});
+   var startup=new ToolStripMenuItem("Start with Windows"){CheckOnClick=true,Checked=StartupEnabled()};startup.CheckedChanged+=delegate{SetStartup(startup.Checked);};menu.Items.Add(startup);
+   var systemQuiet=new ToolStripMenuItem("Soften Windows system sounds"){CheckOnClick=true,Checked=true};systemQuiet.CheckedChanged+=delegate{systemGain=systemQuiet.Checked?0.05f:1f;if(audio!=null)audio.SystemSoundsGain=systemGain;};menu.Items.Add(systemQuiet);
+   menu.Items.Add("Exit (keep current volume)",null,delegate{allowClose=true;Close();});
+   tray=new NotifyIcon{Icon=SystemIcons.Information,Text="JBL Flip 6 Volume",Visible=true,ContextMenuStrip=menu};tray.DoubleClick+=delegate{ShowWindow();};
    slider.ValueChanged+=delegate{if(!updating && audio!=null){try{audio.Set(slider.Value/100f);Tick();}catch(Exception e){status.Text=e.Message;}}};
    timer=new System.Windows.Forms.Timer{Interval=30};timer.Tick+=delegate{Tick();};timer.Start();Tick();
    if(minimized){ShowInTaskbar=false;WindowState=FormWindowState.Minimized;Shown+=delegate{Hide();};}
@@ -149,7 +149,7 @@ namespace JblVolume {
   }
   void ShowWindow(){ShowInTaskbar=true;Show();WindowState=FormWindowState.Normal;Activate();}
   void Tick(){try{if(audio==null){if(retries++%70!=0)return;audio=new Audio();audio.SystemSoundsGain=systemGain;}audio.Sync(true);updating=true;slider.Value=Math.Max(0,Math.Min(100,(int)Math.Round(audio.Master*100)));updating=false;
-    label.Text="JBL Flip 6 Â· "+slider.Value+" %";status.Text=(audio.Muted?"Silenciado":"Control por software activo")+" Â· "+audio.Sessions+" sesiones\nUsa el volumen de Windows o las teclas multimedia.";tray.Text="JBL Flip 6: "+slider.Value+" %";lastError="";
+    label.Text="JBL Flip 6 - "+slider.Value+" %";status.Text=(audio.Muted?"Muted":"Software volume control active")+" - "+audio.Sessions+" sessions\nUse Windows volume or your keyboard media keys.";tray.Text="JBL Flip 6: "+slider.Value+" %";lastError="";
    }catch(Exception e){updating=false;if(audio!=null){audio.Dispose();audio=null;}status.Text=e.Message;if(e.Message!=lastError){File.AppendAllText(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"errors.log"),DateTime.Now.ToString("s")+" "+e.Message+Environment.NewLine);lastError=e.Message;}}}
   static bool StartupEnabled(){using(var key=Microsoft.Win32.Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run")){return key!=null&&key.GetValue("JBLVolume")!=null;}}
   static void SetStartup(bool enabled){using(var key=Microsoft.Win32.Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run")){if(enabled)key.SetValue("JBLVolume","\""+Application.ExecutablePath+"\" --tray");else key.DeleteValue("JBLVolume",false);}}
