@@ -1,0 +1,11 @@
+# Estado y diagnosticos locales: no publicar
+session-levels.tsv
+session-levels.tsv.tmp
+diagnostic.txt
+errors.log
+evidence/
+*.pdb
+*.user
+*.suo
+bin/
+obj/
