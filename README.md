@@ -48,13 +48,15 @@ The tray menu includes **Start with Windows** (off by default) and **Soften Wind
 
 ## How it works and limitations
 
-The app reads the Zgmicro endpoint's `IAudioEndpointVolume` and adjusts its sessions through `ISimpleAudioVolume` approximately every 30 ms. It preserves relative application levels where possible and saves state next to the executable to avoid repeated attenuation when restarted.
+The app reads the Zgmicro endpoint's `IAudioEndpointVolume` and adjusts its sessions through `ISimpleAudioVolume` approximately every 30 ms. Applications use the full 0-100% range by default. Deliberate per-application mixer adjustments are saved separately using the application's session identifier, rather than the identity of one process instance. Restored Windows mixer levels are never treated as new relative preferences.
+
+**Restart fix:** older versions could mistake an already reduced session level for a new baseline, limiting an application to 20% or multiplying the attenuation again after a restart. The updated version ignores that legacy state. On the first upgrade with an active audio session, it may lower the main Windows volume to preserve the current listening level; raise it normally afterward to use the full range.
 
 This works with the Windows shared audio mixer. Applications using WASAPI exclusive mode or ASIO may bypass it. A new session may produce sound before the next adjustment cycle: **this utility is not a safety limiter**. It does not control the speaker's physical volume or modify its firmware.
 
 The default audio output is left unchanged. If USB is disconnected, the app waits for reconnection. Only Zgmicro sessions are managed; application mixer levels may change while the utility is running.
 
-To move the app to another PC, copy **only the executable**, without `session-levels.tsv`. Diagnostics and state are stored locally and are never uploaded.
+To move the app to another PC, copy **only the executable**, without `session-levels.tsv` or `application-levels-v2.tsv`. Diagnostics and state are stored locally and are never uploaded. The legacy file is retained for recovery but no longer used.
 
 ## Build from source
 
@@ -65,6 +67,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\build.ps1
 ```
 
 The script uses the .NET Framework compiler included with Windows and downloads no dependencies. It produces `JBLVolume.exe`.
+
+Run the volume regression tests without changing any real audio levels:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\run.ps1
+```
 
 To generate a read-only diagnostic report:
 

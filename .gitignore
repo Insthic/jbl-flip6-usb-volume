@@ -1,6 +1,8 @@
 # Local state and diagnostics: do not publish
 session-levels.tsv
 session-levels.tsv.tmp
+application-levels-v2.tsv
+application-levels-v2.tsv.tmp
 diagnostic.txt
 errors.log
 evidence/

@@ -79,14 +79,48 @@ namespace JblVolume {
   [PreserveSig] int SetMute([MarshalAs(UnmanagedType.Bool)] bool mute,ref Guid context);
   [PreserveSig] int GetMute([MarshalAs(UnmanagedType.Bool)] out bool mute);
  }
- class SessionLevel { public float Baseline; public float Last; }
+ class SessionLevel { public float Last; public float Factor; }
+ class VolumePolicy {
+  readonly string path;
+  readonly Dictionary<string,float> trims=new Dictionary<string,float>(StringComparer.Ordinal);
+  readonly Dictionary<string,SessionLevel> observed=new Dictionary<string,SessionLevel>(StringComparer.Ordinal);
+  public bool HasSavedState { get { return File.Exists(path); } }
+  public VolumePolicy(string statePath) {
+   path=statePath;
+   if(!File.Exists(path))return;
+   string[] lines=File.ReadAllLines(path);
+   if(lines.Length==0||lines[0]!="# JBLVolume relative levels v2")throw new InvalidDataException("Invalid volume preferences file.");
+   for(int i=1;i<lines.Length;i++) {
+    string[] parts=lines[i].Split('\t');float trim;
+    if(parts.Length!=2||!float.TryParse(parts[1],NumberStyles.Float,CultureInfo.InvariantCulture,out trim)||float.IsNaN(trim)||trim<0||trim>1)continue;
+    try{trims[System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(parts[0]))]=trim;}catch(FormatException){}
+   }
+  }
+  public void Save() {
+   var lines=new List<string>{"# JBLVolume relative levels v2"};
+   foreach(var entry in trims)lines.Add(Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(entry.Key))+"\t"+entry.Value.ToString("R",CultureInfo.InvariantCulture));
+   string temporary=path+".tmp";File.WriteAllLines(temporary,lines);
+   if(File.Exists(path))File.Replace(temporary,path,null);else File.Move(temporary,path);
+  }
+  public float Target(string instance,string application,bool system,float current,float master,bool muted,float systemGain,bool apply) {
+   float trim;if(!trims.TryGetValue(application,out trim))trim=1;
+   SessionLevel last;
+   // A restored Windows level is an OUTPUT, never a new relative preference.
+   // Only a change observed after we applied a level counts as a mixer edit.
+   if(apply&&!system&&observed.TryGetValue(instance,out last)&&last.Factor>0.0001f&&Math.Abs(current-last.Last)>0.002f) {
+    trim=Math.Max(0,Math.Min(1,current/last.Factor));
+    trims[application]=trim;Save();
+   }
+   return muted?0:Math.Max(0,Math.Min(1,master*(system?systemGain:trim)));
+  }
+  public void Applied(string instance,float actual,float master,bool muted) {
+   observed[instance]=new SessionLevel{Last=actual,Factor=muted?0:master};
+  }
+ }
  class Audio : IDisposable {
   static Guid context=new Guid("50754d6e-7a54-4708-a81a-5cfe9c217e64");
   IDeviceEnumerator enumerator; IDevice device; IEndpointVolume endpoint; ISessionManager manager;
-  Dictionary<string,SessionLevel> levels=new Dictionary<string,SessionLevel>();
-  string StatePath { get { return Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"session-levels.tsv"); } }
-  void LoadLevels(){if(!File.Exists(StatePath))return;foreach(string line in File.ReadAllLines(StatePath)){string[] p=line.Split('\t');float b,l;if(p.Length==3&&float.TryParse(p[1],NumberStyles.Float,CultureInfo.InvariantCulture,out b)&&float.TryParse(p[2],NumberStyles.Float,CultureInfo.InvariantCulture,out l)&&b>=0&&b<=1&&l>=0&&l<=1){try{levels[System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(p[0]))]=new SessionLevel{Baseline=b,Last=l};}catch(FormatException){}}}}
-  void SaveLevels(){var rows=new List<string>();foreach(var entry in levels)rows.Add(Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(entry.Key))+"\t"+entry.Value.Baseline.ToString("R",CultureInfo.InvariantCulture)+"\t"+entry.Value.Last.ToString("R",CultureInfo.InvariantCulture));string temporary=StatePath+".tmp";File.WriteAllLines(temporary,rows);if(File.Exists(StatePath))File.Replace(temporary,StatePath,null);else File.Move(temporary,StatePath);}
+  VolumePolicy policy;
   public string Name="JBL / Zgmicro"; public float Master; public bool Muted; public int Sessions;
   public string Id; public uint HardwareSupport; public float SystemSoundsGain=0.05f;
   [DllImport("ole32.dll")] static extern int PropVariantClear(ref PropVariant value);
@@ -104,25 +138,37 @@ namespace JblVolume {
     if(device==null)throw new InvalidOperationException("JBL / Zgmicro is not connected. Waiting for USB...");
     Guid iid=typeof(IEndpointVolume).GUID;object result;Check(device.Activate(ref iid,23,IntPtr.Zero,out result));endpoint=(IEndpointVolume)result;
     iid=typeof(ISessionManager).GUID;Check(device.Activate(ref iid,23,IntPtr.Zero,out result));manager=(ISessionManager)result;
-    Check(endpoint.QueryHardwareSupport(out HardwareSupport));LoadLevels();Read();
+    Check(endpoint.QueryHardwareSupport(out HardwareSupport));policy=new VolumePolicy(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"application-levels-v2.tsv"));Read();
    }catch{Dispose();throw;}
   }
   public void Read(){Check(endpoint.GetMasterVolumeLevelScalar(out Master));Check(endpoint.GetMute(out Muted));uint state;Check(device.GetState(out state));if(state!=1)throw new InvalidOperationException("JBL disconnected");}
   public void Set(float scalar){Check(endpoint.SetMasterVolumeLevelScalar(Math.Max(0,Math.Min(1,scalar)),ref context));}
   public void ToggleMute(){Read();Check(endpoint.SetMute(!Muted,ref context));}
+  void MigrateLegacyLevels() {
+   if(policy.HasSavedState)return;
+   // The v1 file is intentionally not imported: its saved baselines may already
+   // contain compounded attenuation. Keep the file for recovery instead.
+   if(File.Exists(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"session-levels.tsv"))) {
+    float safe=Master;ISessionEnumerator sessions=null;
+    try{Check(manager.GetSessionEnumerator(out sessions));int count;Check(sessions.GetCount(out count));
+     for(int i=0;i<count;i++){ISessionControl control=null;try{Check(sessions.GetSession(i,out control));int state;uint pid;Check(control.GetState(out state));Check(control.GetProcessId(out pid));
+      if(state==1&&pid!=0){float current;Check(((ISimpleVolume)control).GetMasterVolume(out current));safe=Math.Min(safe,current);}
+     }finally{Release(control);}}
+    }finally{Release(sessions);}
+    if(safe<Master){Set(safe);Read();}
+   }
+   policy.Save();
+  }
   public List<string> Sync(bool apply){
-   Read();ISessionEnumerator sessions=null;Sessions=0;var rows=new List<string>();
+   Read();if(apply)MigrateLegacyLevels();ISessionEnumerator sessions=null;Sessions=0;var rows=new List<string>();
    try{Check(manager.GetSessionEnumerator(out sessions));int count;Check(sessions.GetCount(out count));
     for(int i=0;i<count;i++){ISessionControl control=null;try{
      Check(sessions.GetSession(i,out control));int state;Check(control.GetState(out state));if(state==2)continue;
-     string key;Check(control.GetSessionInstanceIdentifier(out key));uint pid;Check(control.GetProcessId(out pid));
+     string key,application;Check(control.GetSessionInstanceIdentifier(out key));Check(control.GetSessionIdentifier(out application));uint pid;Check(control.GetProcessId(out pid));
      ISimpleVolume volume=(ISimpleVolume)control;float current;Check(volume.GetMasterVolume(out current));
-     SessionLevel level;if(!levels.TryGetValue(key,out level)){level=new SessionLevel{Baseline=current,Last=current};levels[key]=level;}
-     // Keep manual application changes as their new relative level. Never amplify past 100%.
-     if(pid!=0 && Math.Abs(current-level.Last)>0.002f)level.Baseline=Master>0.001f?Math.Min(1,current/Master):current;
-     float target=Muted?0:(pid==0?SystemSoundsGain:level.Baseline)*Master;
-     if(apply && Math.Abs(current-target)>0.0001f){level.Last=target;SaveLevels();Check(volume.SetMasterVolume(target,ref context));float readback;Check(volume.GetMasterVolume(out readback));if(Math.Abs(readback-target)>0.002f)throw new InvalidOperationException("The audio session did not accept the volume adjustment");current=readback;}
-     level.Last=current;Sessions++;
+     float target=policy.Target(key,application,pid==0,current,Master,Muted,SystemSoundsGain,apply);
+     if(apply && Math.Abs(current-target)>0.0001f){Check(volume.SetMasterVolume(target,ref context));float readback;Check(volume.GetMasterVolume(out readback));if(Math.Abs(readback-target)>0.002f)throw new InvalidOperationException("The audio session did not accept the volume adjustment");current=readback;}
+     if(apply)policy.Applied(key,current,Master,Muted);Sessions++;
      rows.Add(string.Format(CultureInfo.InvariantCulture,"pid={0} state={1} session={2:0.0000} target={3:0.0000}",pid,state,current,target));
     }finally{Release(control);}}
    }finally{Release(sessions);}return rows;
